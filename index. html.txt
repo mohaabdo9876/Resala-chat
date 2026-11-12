@@ -1,0 +1,1149 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Send, MessageCircle, User, Lock, Phone, UserPlus, LogIn,
+  LogOut, Search, Settings, Shield, AlertCircle, ArrowRight,
+  CheckCheck, Eye, KeyRound, Ban,
+  CheckCircle2, UserCheck, AlertTriangle
+} from 'lucide-react';
+
+export default function App() {
+  // --- مفاتيح التخزين المحلي المستمر (Persistent LocalStorage Keys) ---
+  const USERS_KEY = 'resala_final_users_v1';
+  const CURRENT_USER_KEY = 'resala_final_current_user_v1';
+  const CHATS_KEY = 'resala_final_chats_v1';
+  const ADMIN_SESSION_KEY = 'resala_final_admin_mode_v1';
+
+  // --- استرجاع البيانات المحفوظة من ذاكرة المتصفح ---
+  const [users, setUsers] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  });
+
+  const [currentUserId, setCurrentUserId] = useState(() => {
+    return localStorage.getItem(CURRENT_USER_KEY) || null;
+  });
+
+  const [chats, setChats] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(CHATS_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  });
+
+  // حالة جلسة صاحب الموقع (Admin)
+  const [isAdminVerified, setIsAdminVerified] = useState(() => {
+    return localStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+  });
+  const [isImpersonating, setIsImpersonating] = useState(false);
+
+  // --- حالات نماذج التسجيل والدخول ---
+  const [authMode, setAuthMode] = useState('register'); // 'register' | 'login'
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // --- حالات الواجهة والمحادثات ---
+  const [activeChatUserId, setActiveChatUserId] = useState(null);
+  const [messageInput, setMessageInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  // --- حالات نافذة ولوحة تحكم صاحب الموقع ---
+  const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
+  const [adminPassInput, setAdminPassInput] = useState('');
+  const [adminError, setAdminError] = useState('');
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+
+  const messagesEndRef = useRef(null);
+
+  // بيانات المستخدم الحالي والمستخدم الجاري مراسلته
+  const currentUser = users.find(u => u.id === currentUserId) || null;
+  const activeChatUser = users.find(u => u.id === activeChatUserId) || null;
+
+  // --- حفظ البيانات تلقائياً في المتصفح عند أي تغيير ---
+  useEffect(() => {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  }, [users]);
+
+  useEffect(() => {
+    if (currentUserId) {
+      localStorage.setItem(CURRENT_USER_KEY, currentUserId);
+    } else {
+      localStorage.removeItem(CURRENT_USER_KEY);
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
+    localStorage.setItem(CHATS_KEY, JSON.stringify(chats));
+  }, [chats]);
+
+  useEffect(() => {
+    localStorage.setItem(ADMIN_SESSION_KEY, isAdminVerified ? 'true' : 'false');
+  }, [isAdminVerified]);
+
+  // --- نظام حالة الاتصال الحقيقية (Real Online/Offline Presence & Heartbeat) ---
+  useEffect(() => {
+    // لا نغير حالة الاتصال إذا كان صاحب الموقع يتصفح الحساب خفية
+    if (!currentUserId || isImpersonating) return;
+
+    const setOnlineStatus = (status) => {
+      setUsers(prev =>
+        prev.map(u =>
+          u.id === currentUserId
+            ? { ...u, isOnline: status, lastSeen: Date.now() }
+            : u
+        )
+      );
+    };
+
+    // تعيين متصل فور الدخول
+    setOnlineStatus(true);
+
+    // تحديث دوري (Heartbeat) كل 5 ثوانٍ لتأكيد التواجد الفعلي
+    const heartbeat = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setOnlineStatus(true);
+      }
+    }, 5000);
+
+    // مراقبة إخفاء أو إظهار تبويب المتصفح
+    const handleVisibilityChange = () => {
+      setOnlineStatus(document.visibilityState === 'visible');
+    };
+
+    // تحديث فوري عند إغلاق الصفحة أو المتصفح
+    const handleBeforeUnload = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
+        const updated = stored.map(u =>
+          u.id === currentUserId ? { ...u, isOnline: false, lastSeen: Date.now() } : u
+        );
+        localStorage.setItem(USERS_KEY, JSON.stringify(updated));
+      } catch {
+        // تجاهل أخطاء الإغلاق
+      }
+    };
+
+    // مزامنة فورية بين التبويبات المفتوحة في نفس المتصفح
+    const handleStorageSync = (e) => {
+      if (e.key === USERS_KEY && e.newValue) {
+        setUsers(JSON.parse(e.newValue));
+      }
+      if (e.key === CHATS_KEY && e.newValue) {
+        setChats(JSON.parse(e.newValue));
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('storage', handleStorageSync);
+
+    return () => {
+      clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('storage', handleStorageSync);
+    };
+  }, [currentUserId, isImpersonating]);
+
+  // التمرير التلقائي لآخر رسالة في المحادثة
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chats, activeChatUserId]);
+
+  // --- محرك كشف الحسابات الوهمية والمشبوهة ---
+  const analyzeAccountAuthenticity = (name, phoneNum) => {
+    const reasons = [];
+    const cleanName = name.trim();
+
+    // 1. فحص الكلمات الدالة على الحسابات الوهمية أو التجريبية
+    const fakeKeywords = [
+      'test', 'fake', 'bot', 'admin', 'user', 'demo',
+      'وهمي', 'تيست', 'تجربة', 'مجهول', 'بدون', 'هكر', 'سبام',
+      'aaa', 'bbb', 'xxx', 'qwerty', 'asdf'
+    ];
+    if (fakeKeywords.some(kw => cleanName.toLowerCase().includes(kw))) {
+      reasons.push('اسم يحتوي على كلمات تجريبية أو وهمية');
+    }
+
+    // 2. فحص تكرار الحروف بشكل غير طبيعي (مثل: مممممحمد أو aaaa)
+    if (/(.)\1{2,}/.test(cleanName)) {
+      reasons.push('تكرار غير طبيعي للحروف في الاسم');
+    }
+
+    // 3. فحص قصر الاسم الشديد أو خلوه من الحروف الحقيقية
+    if (cleanName.length < 3 || !/[a-zA-Z\u0600-\u06FF]/.test(cleanName)) {
+      reasons.push('الاسم قصير جداً أو لا يحتوي على أحرف حقيقية');
+    }
+
+    // 4. فحص نمط الأرقام المتكررة أو المتسلسلة (مثل 01000000000 أو 01012345678)
+    const subscriberPart = phoneNum.slice(3);
+    if (/^(\d)\1{7}$/.test(subscriberPart) || subscriberPart === '12345678' || subscriberPart === '87654321') {
+      reasons.push('تسلسل رقم هاتف عشوائي أو مكرر');
+    }
+
+    return {
+      isSuspicious: reasons.length > 0,
+      reasons
+    };
+  };
+
+  // --- التحقق من شروط الرقم المصري وكلمة السر الصارمة ---
+  const validateEgyptianPhone = (num) => {
+    // 11 رقماً ويبدأ بـ 010 أو 011 أو 012 أو 015 فقط
+    return /^01[0125][0-9]{8}$/.test(num);
+  };
+
+  const validateStrictPassword = (pass) => {
+    // 1. ممنوع تماماً وجود أي أرقام (0-9)
+    if (/[0-9]/.test(pass)) {
+      return { valid: false, msg: 'ممنوع تماماً استخدام أي أرقام (0-9) في كلمة السر!' };
+    }
+    // 2. ممنوع الحروف العربية أو المسافات
+    if (/[\u0600-\u06FF\s]/.test(pass)) {
+      return { valid: false, msg: 'كلمة السر يجب أن تكون باللغة الإنجليزية فقط وبدون مسافات.' };
+    }
+    // 3. يجب أن تحتوي على حرف إنجليزي واحد على الأقل
+    if (!/[a-zA-Z]/.test(pass)) {
+      return { valid: false, msg: 'يجب أن تحتوي كلمة السر على حروف إنجليزية (A-Z / a-z).' };
+    }
+    // 4. يجب أن تحتوي على رمز خاص واحد على الأقل
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pass)) {
+      return { valid: false, msg: 'يجب أن تحتوي كلمة السر على رموز خاصة مثل (@ # $ % & * !).' };
+    }
+    // 5. الحد الأدنى للطول 6 خانات
+    if (pass.length < 6) {
+      return { valid: false, msg: 'كلمة السر قصيرة جداً (يجب أن لا تقل عن 6 خانات).' };
+    }
+    return { valid: true, msg: '' };
+  };
+
+  // --- إنشاء حساب جديد ---
+  const handleRegister = (e) => {
+    e.preventDefault();
+    setAuthError('');
+
+    const cleanName = fullName.trim();
+    const cleanPhone = phone.trim();
+
+    if (!cleanName || !cleanPhone || !password) {
+      setAuthError('يرجى إدخال الاسم الكامل، رقم الهاتف المصري، وكلمة السر.');
+      return;
+    }
+
+    if (!validateEgyptianPhone(cleanPhone)) {
+      setAuthError('يجب إدخال رقم هاتف مصري صحيح مكون من 11 رقماً ويبدأ بـ (010 أو 011 أو 012 أو 015).');
+      return;
+    }
+
+    const passCheck = validateStrictPassword(password);
+    if (!passCheck.valid) {
+      setAuthError(passCheck.msg);
+      return;
+    }
+
+    if (users.some(u => u.phone === cleanPhone)) {
+      setAuthError('رقم الهاتف هذا مسجل بالفعل! يمكنك تسجيل الدخول به.');
+      return;
+    }
+
+    const fakeCheck = analyzeAccountAuthenticity(cleanName, cleanPhone);
+
+    const newUser = {
+      id: 'usr_' + Date.now(),
+      name: cleanName,
+      phone: cleanPhone,
+      password: password,
+      isOnline: true,
+      lastSeen: Date.now(),
+      createdAt: new Date().toLocaleDateString('ar-EG'),
+      isSuspicious: fakeCheck.isSuspicious,
+      suspiciousReasons: fakeCheck.reasons,
+      isBlocked: false
+    };
+
+    setUsers(prev => [...prev, newUser]);
+    setCurrentUserId(newUser.id);
+    setFullName('');
+    setPhone('');
+    setPassword('');
+  };
+
+  // --- تسجيل الدخول ---
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setAuthError('');
+
+    const cleanPhone = phone.trim();
+
+    if (!validateEgyptianPhone(cleanPhone)) {
+      setAuthError('يرجى إدخال رقم هاتف مصري صحيح مكون من 11 رقماً.');
+      return;
+    }
+
+    const foundUser = users.find(u => u.phone === cleanPhone && u.password === password);
+    if (!foundUser) {
+      setAuthError('بيانات الدخول غير صحيحة! تأكد من الرقم المصري وكلمة السر.');
+      return;
+    }
+
+    if (foundUser.isBlocked) {
+      setAuthError('تم حظر هذا الحساب بواسطة إدارة الموقع للاشتباه في كونه حساباً وهمياً.');
+      return;
+    }
+
+    setUsers(prev =>
+      prev.map(u =>
+        u.id === foundUser.id ? { ...u, isOnline: true, lastSeen: Date.now() } : u
+      )
+    );
+    setCurrentUserId(foundUser.id);
+    setPhone('');
+    setPassword('');
+  };
+
+  // --- تسجيل الخروج ---
+  const handleLogout = () => {
+    if (currentUserId && !isImpersonating) {
+      setUsers(prev =>
+        prev.map(u =>
+          u.id === currentUserId ? { ...u, isOnline: false, lastSeen: Date.now() } : u
+        )
+      );
+    }
+    setCurrentUserId(null);
+    setActiveChatUserId(null);
+    setShowSettingsModal(false);
+    setIsImpersonating(false);
+  };
+
+  // --- إرسال رسالة بنمط الواتساب ---
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (!messageInput.trim() || !activeChatUser || !currentUser) return;
+
+    const newMsg = {
+      id: 'msg_' + Date.now(),
+      senderId: currentUser.id,
+      receiverId: activeChatUser.id,
+      text: messageInput.trim(),
+      timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setChats(prev => [...prev, newMsg]);
+    setMessageInput('');
+  };
+
+  // --- التحقق من كلمة سر صاحب الموقع ---
+  const handleAdminAuth = (e) => {
+    e.preventDefault();
+    setAdminError('');
+    if (adminPassInput === 'MOHAMMED123456789@#$') {
+      setIsAdminVerified(true);
+      setShowAdminLoginModal(false);
+      setShowAdminDashboard(true);
+      setAdminPassInput('');
+    } else {
+      setAdminError('كلمة السر غير صحيحة!');
+    }
+  };
+
+  // دخول صاحب الموقع مباشرة إلى حساب أي مستخدم
+  const handleImpersonateUser = (targetUser) => {
+    setCurrentUserId(targetUser.id);
+    setIsImpersonating(true);
+    setShowAdminDashboard(false);
+    setActiveChatUserId(null);
+  };
+
+  // العودة من حساب المستخدم إلى لوحة تحكم صاحب الموقع
+  const handleExitImpersonation = () => {
+    setIsImpersonating(false);
+    setCurrentUserId(null);
+    setActiveChatUserId(null);
+    setShowAdminDashboard(true);
+  };
+
+  // حظر / فك حظر حساب مشبوه
+  const toggleBlockUser = (userId) => {
+    setUsers(prev =>
+      prev.map(u =>
+        u.id === userId ? { ...u, isBlocked: !u.isBlocked, isOnline: false } : u
+      )
+    );
+  };
+
+  // إزالة حساب وهمي نهائياً بواسطة صاحب الموقع فقط
+  const removeFakeUserByAdmin = (userId) => {
+    setUsers(prev => prev.filter(u => u.id !== userId));
+    setChats(prev => prev.filter(m => m.senderId !== userId && m.receiverId !== userId));
+  };
+
+  // التحقق من حالة الاتصال الحقيقية (متصل إذا كان نشطاً خلال آخر 20 ثانية)
+  const isUserTrulyOnline = (user) => {
+    if (!user || !user.isOnline) return false;
+    return Date.now() - (user.lastSeen || 0) < 20000;
+  };
+
+  // رسائل المحادثة المفتوحة حالياً
+  const currentChatMessages = chats.filter(
+    m =>
+      (m.senderId === currentUser?.id && m.receiverId === activeChatUser?.id) ||
+      (m.senderId === activeChatUser?.id && m.receiverId === currentUser?.id)
+  );
+
+  // =========================================================================
+  // 1. شاشة لوحة تحكم صاحب الموقع (Admin Dashboard)
+  // =========================================================================
+  if (showAdminDashboard && isAdminVerified) {
+    const suspiciousCount = users.filter(u => u.isSuspicious || u.isBlocked).length;
+
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-6" dir="rtl">
+        <div className="max-w-6xl mx-auto space-y-6">
+          {/* رأس لوحة التحكم */}
+          <div className="bg-slate-900 border border-amber-500/30 rounded-3xl p-5 flex flex-wrap justify-between items-center gap-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                <Shield className="w-7 h-7" />
+              </div>
+              <div>
+                <h1 className="text-xl font-black text-amber-400">لوحة تحكم صاحب موقع رسالة</h1>
+                <p className="text-xs text-slate-400">مراقبة الحسابات الحقيقية، كشف الوهميين، والدخول المباشر للحسابات</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowAdminDashboard(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition-colors"
+              >
+                العودة للموقع
+              </button>
+              <button
+                onClick={() => {
+                  setIsAdminVerified(false);
+                  setShowAdminDashboard(false);
+                }}
+                className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-xs font-bold text-rose-400 transition-colors"
+              >
+                قفل لوحة الإدارة
+              </button>
+            </div>
+          </div>
+
+          {/* إحصائيات سريعة */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-slate-400">إجمالي المسجلين الفعليين</div>
+                <div className="text-2xl font-black text-white mt-1">{users.length}</div>
+              </div>
+              <UserCheck className="w-8 h-8 text-emerald-400 opacity-80" />
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-slate-400">حسابات وهمية / مشبوهة</div>
+                <div className="text-2xl font-black text-amber-400 mt-1">{suspiciousCount}</div>
+              </div>
+              <AlertTriangle className="w-8 h-8 text-amber-400 opacity-80" />
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-slate-400">إجمالي الرسائل المتبادلة</div>
+                <div className="text-2xl font-black text-cyan-400 mt-1">{chats.length}</div>
+              </div>
+              <MessageCircle className="w-8 h-8 text-cyan-400 opacity-80" />
+            </div>
+          </div>
+
+          {/* جدول كافة المستخدمين المسجلين */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <div className="p-5 border-b border-slate-800 flex justify-between items-center">
+              <h2 className="font-bold text-base text-white flex items-center gap-2">
+                <User className="w-5 h-5 text-emerald-400" />
+                قائمة كافة الحسابات المسجلة ({users.length})
+              </h2>
+            </div>
+
+            {users.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 text-sm">
+                لا يوجد أي مستخدمين مسجلين في الموقع حتى الآن.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-950/70 text-slate-400 text-xs border-b border-slate-800">
+                      <th className="p-4">المستخدم</th>
+                      <th className="p-4">الرقم المصري</th>
+                      <th className="p-4">كلمة السر</th>
+                      <th className="p-4">حالة الاتصال</th>
+                      <th className="p-4">فحص الوهمية</th>
+                      <th className="p-4">تحكم صاحب الموقع</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70 text-sm">
+                    {users.map(u => {
+                      const online = isUserTrulyOnline(u);
+                      return (
+                        <tr key={u.id} className="hover:bg-slate-800/30 transition-colors">
+                          <td className="p-4 font-bold text-white">{u.name}</td>
+                          <td className="p-4 font-mono text-emerald-400 text-xs">{u.phone}</td>
+                          <td className="p-4 font-mono text-amber-300 text-xs" dir="ltr">{u.password}</td>
+                          <td className="p-4">
+                            {online ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                متصل الآن
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 bg-slate-800 px-2.5 py-1 rounded-full">
+                                <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                                غير متصل
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            {u.isBlocked ? (
+                              <span className="text-xs font-bold text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1 rounded-lg">
+                                محظور (وهمي)
+                              </span>
+                            ) : u.isSuspicious ? (
+                              <div className="space-y-1">
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-lg">
+                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                  حساب مشبوه
+                                </span>
+                                <div className="text-[10px] text-slate-400">
+                                  {u.suspiciousReasons?.join(' • ')}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
+                                <CheckCircle2 className="w-4 h-4" />
+                                حساب حقيقي
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {/* زر الدخول لحساب المستخدم مباشرة */}
+                              <button
+                                onClick={() => handleImpersonateUser(u)}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md"
+                                title="الدخول إلى هذا الحساب وتصفحه ومشاهدة محادثاته"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                دخول للحساب
+                              </button>
+
+                              {/* زر حظر / فك حظر */}
+                              <button
+                                onClick={() => toggleBlockUser(u.id)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                                  u.isBlocked
+                                    ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+                                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+                                }`}
+                              >
+                                {u.isBlocked ? 'فك الحظر' : 'حظر'}
+                              </button>
+
+                              {/* زر طرد الحساب الوهمي */}
+                              <button
+                                onClick={() => removeFakeUserByAdmin(u.id)}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold transition-colors"
+                                title="طرد وإزالة الحساب الوهمي"
+                              >
+                                <Ban className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // 2. شاشة تسجيل الدخول وإنشاء الحساب (لغير المسجلين)
+  // =========================================================================
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4 font-sans relative" dir="rtl">
+        {/* إضاءات خلفية نيون */}
+        <div className="fixed top-1/4 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-[130px] pointer-events-none"></div>
+        <div className="fixed bottom-1/4 left-1/4 w-96 h-96 bg-teal-600/10 rounded-full blur-[130px] pointer-events-none"></div>
+
+        {/* زر دخول صاحب الموقع */}
+        <button
+          onClick={() => {
+            if (isAdminVerified) {
+              setShowAdminDashboard(true);
+            } else {
+              setShowAdminLoginModal(true);
+            }
+          }}
+          className="fixed top-4 left-4 z-20 px-3 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-slate-400 hover:text-amber-400 text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg"
+          title="إدارة الموقع"
+        >
+          <KeyRound className="w-3.5 h-3.5" />
+          <span>إدارة الموقع</span>
+        </button>
+
+        <div className="w-full max-w-md bg-slate-900/90 backdrop-blur-2xl border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl relative z-10">
+          {/* الشعار */}
+          <div className="text-center mb-7">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 text-slate-950 shadow-lg shadow-emerald-500/20 mb-3">
+              <MessageCircle className="w-9 h-9 fill-slate-950" />
+            </div>
+            <h1 className="text-3xl font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-white bg-clip-text text-transparent">
+              رسالة | Resala
+            </h1>
+            <p className="text-xs text-slate-400 mt-1.5">
+              تواصل حقيقي ومباشر بالأرقام المصرية فقط
+            </p>
+          </div>
+
+          {/* التبديل بين إنشاء حساب وتسجيل الدخول */}
+          <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800 mb-5">
+            <button
+              type="button"
+              onClick={() => { setAuthMode('register'); setAuthError(''); }}
+              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${
+                authMode === 'register'
+                  ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <UserPlus className="w-4 h-4" />
+              إنشاء حساب جديد
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('login'); setAuthError(''); }}
+              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${
+                authMode === 'login'
+                  ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <LogIn className="w-4 h-4" />
+              تسجيل الدخول
+            </button>
+          </div>
+
+          {/* رسائل الخطأ */}
+          {authError && (
+            <div className="mb-4 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2 leading-relaxed">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          {/* نموذج البيانات */}
+          <form onSubmit={authMode === 'register' ? handleRegister : handleLogin} className="space-y-4">
+            {authMode === 'register' && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">الاسم الكامل</label>
+                <div className="relative">
+                  <User className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="اكتب اسمك الكامل هنا"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-11 pl-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-semibold text-slate-300">رقم الهاتف المصري</label>
+                <span className="text-[10px] text-emerald-400 font-mono">010 / 011 / 012 / 015</span>
+              </div>
+              <div className="relative">
+                <Phone className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="tel"
+                  maxLength={11}
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                  placeholder="010xxxxxxxx (11 رقم)"
+                  dir="ltr"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-11 pl-4 py-3 text-sm text-right font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-semibold text-slate-300">كلمة السر</label>
+                <span className="text-[10px] text-amber-400">حروف إنجليزية + رموز (بدون أرقام)</span>
+              </div>
+              <div className="relative">
+                <Lock className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="مثال: Resala@Egypt#"
+                  dir="ltr"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-11 pl-4 py-3 text-sm text-right text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+              {authMode === 'register' && (
+                <p className="text-[10px] text-slate-500 mt-1.5">
+                  * يُمنع إدخال أي أرقام (0-9). استخدم حروفاً إنجليزية ورموزاً مثل <span className="text-slate-300 font-mono">@ # $ % & * !</span>
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="w-full mt-4 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-sm"
+            >
+              {authMode === 'register' ? 'إنشاء الحساب وحفظ البيانات' : 'دخول إلى حسابي'}
+            </button>
+          </form>
+
+          <div className="mt-5 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            <span>يتم حفظ حسابك ومحادثاتك تلقائياً حتى بعد إغلاق الموقع</span>
+          </div>
+        </div>
+
+        {/* نافذة إدخال كلمة سر صاحب الموقع (بدون أي تلميحات) */}
+        {showAdminLoginModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+            <form
+              onSubmit={handleAdminAuth}
+              className="bg-slate-900 border border-amber-500/30 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4"
+            >
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-black text-amber-400 flex items-center gap-2">
+                  <Shield className="w-5 h-5" />
+                  دخول صاحب الموقع
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => { setShowAdminLoginModal(false); setAdminError(''); setAdminPassInput(''); }}
+                  className="text-slate-400 hover:text-white text-xs"
+                >
+                  إغلاق
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-400">
+                أدخل كلمة سر الإدارة للمتابعة:
+              </p>
+
+              {adminError && (
+                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+                  {adminError}
+                </div>
+              )}
+
+              <input
+                type="password"
+                value={adminPassInput}
+                onChange={(e) => setAdminPassInput(e.target.value)}
+                placeholder="كلمة السر..."
+                dir="ltr"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-center text-white focus:outline-none focus:border-amber-500"
+              />
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl transition-colors"
+              >
+                فتح لوحة التحكم
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // 3. الشاشة الرئيسية للمستخدم المسجل (قائمة المستخدمين + المحادثة)
+  // =========================================================================
+  const realOtherUsers = users
+    .filter(u => u.id !== currentUser.id && !u.isBlocked)
+    .filter(u => u.name.toLowerCase().includes(searchQuery.toLowerCase()) || u.phone.includes(searchQuery));
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans" dir="rtl">
+      {/* شريط تنبيه علوي يظهر فقط عندما يتصفح صاحب الموقع حساب مستخدم */}
+      {isImpersonating && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-black flex flex-wrap justify-between items-center gap-2 sticky top-0 z-50 shadow-lg">
+          <div className="flex items-center gap-2">
+            <Eye className="w-4 h-4" />
+            <span>وضع صاحب الموقع: أنت تتصفح الآن حساب ({currentUser.name} - {currentUser.phone})</span>
+          </div>
+          <button
+            onClick={handleExitImpersonation}
+            className="bg-slate-950 text-amber-400 px-3 py-1 rounded-lg hover:bg-slate-900 transition-colors"
+          >
+            العودة للوحة تحكم الإدارة
+          </button>
+        </div>
+      )}
+
+      {/* الشريط العلوي للتطبيق */}
+      <header className="bg-slate-900 border-b border-slate-800 px-4 py-3.5 sticky top-0 z-30 shadow-md">
+        <div className="max-w-4xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center text-slate-950 font-bold shadow-md shadow-emerald-500/20">
+              <MessageCircle className="w-6 h-6 fill-slate-950" />
+            </div>
+            <div>
+              <h1 className="font-black text-xl bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent">
+                رسالة
+              </h1>
+              <div className="flex items-center gap-1.5 text-[11px] text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>أهلاً، {currentUser.name}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* أيقونة الدرع لصاحب الموقع */}
+            <button
+              onClick={() => {
+                if (isAdminVerified) {
+                  setShowAdminDashboard(true);
+                } else {
+                  setShowAdminLoginModal(true);
+                }
+              }}
+              className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-400 border border-slate-800 hover:border-amber-500/40 transition-all"
+              title="لوحة تحكم صاحب الموقع"
+            >
+              <Shield className="w-5 h-5" />
+            </button>
+
+            {/* زر الإعدادات */}
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-emerald-400 border border-slate-800 transition-all"
+              title="الإعدادات"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* المحتوى الرئيسي: قائمة المستخدمين أو المحادثة المفتوحة */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col">
+        {!activeChatUser ? (
+          <div className="space-y-4 flex-1 flex flex-col">
+            {/* مربع البحث ورأس القائمة */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                  <User className="w-5 h-5 text-emerald-400" />
+                  مستخدمو موقع رسالة ({realOtherUsers.length})
+                </h2>
+                <span className="text-[11px] text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
+                  حسابات مصرية حقيقية 100%
+                </span>
+              </div>
+
+              <div className="relative">
+                <Search className="w-5 h-5 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="ابحث بالاسم أو الرقم المصري..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-11 pl-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* قائمة المستخدمين المسجلين */}
+            {realOtherUsers.length === 0 ? (
+              <div className="flex-1 bg-slate-900/50 border border-slate-800/80 rounded-3xl p-10 flex flex-col items-center justify-center text-center space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-400">
+                  <UserPlus className="w-7 h-7" />
+                </div>
+                <h3 className="text-base font-bold text-slate-200">لا يوجد مستخدمون آخرون مسجلون حالياً</h3>
+                <p className="text-xs text-slate-400 max-w-sm leading-relaxed">
+                  بمجرد تسجيل أي شخص حقيقي برقم مصري سيظهر هنا فوراً لتتمكن من مراسلته مباشرة!
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {realOtherUsers.map(user => {
+                  const online = isUserTrulyOnline(user);
+                  const lastMsg = chats
+                    .filter(
+                      m =>
+                        (m.senderId === currentUser.id && m.receiverId === user.id) ||
+                        (m.senderId === user.id && m.receiverId === currentUser.id)
+                    )
+                    .slice(-1)[0];
+
+                  return (
+                    <div
+                      key={user.id}
+                      onClick={() => setActiveChatUserId(user.id)}
+                      className="bg-slate-900 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/40 rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-all shadow-md group"
+                    >
+                      <div className="flex items-center gap-3.5 overflow-hidden">
+                        <div className="relative shrink-0">
+                          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center font-black text-slate-950 text-lg shadow-md">
+                            {user.name.charAt(0)}
+                          </div>
+                          {/* مؤشر حالة الاتصال الحقيقية */}
+                          <span
+                            className={`absolute -bottom-0.5 -left-0.5 w-3.5 h-3.5 rounded-full border-2 border-slate-900 ${
+                              online ? 'bg-emerald-400' : 'bg-slate-500'
+                            }`}
+                            title={online ? 'متصل الآن' : 'غير متصل'}
+                          ></span>
+                        </div>
+
+                        <div className="overflow-hidden">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-white group-hover:text-emerald-400 transition-colors truncate">
+                              {user.name}
+                            </h3>
+                            {user.isSuspicious && (
+                              <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                                مشبوه
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] mt-0.5">
+                            <span className="text-slate-400 font-mono">{user.phone}</span>
+                            <span className="text-slate-600">•</span>
+                            <span className={online ? 'text-emerald-400 font-semibold' : 'text-slate-500'}>
+                              {online ? 'متصل الآن' : 'غير متصل'}
+                            </span>
+                          </div>
+                          {lastMsg && (
+                            <p className="text-[11px] text-slate-400 truncate mt-1">
+                              {lastMsg.senderId === currentUser.id ? 'أنت: ' : ''}
+                              {lastMsg.text}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-emerald-400 group-hover:-translate-x-1 transition-transform">
+                        <ArrowRight className="w-5 h-5 rotate-180" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* واجهة المحادثة المباشرة بنمط الواتساب */
+          <div className="flex-1 flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl h-[78vh]">
+            {/* رأس المحادثة */}
+            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setActiveChatUserId(null)}
+                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-colors"
+                  title="رجوع لقائمة المستخدمين"
+                >
+                  <ArrowRight className="w-5 h-5" />
+                </button>
+
+                <div className="relative">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center font-bold text-slate-950 text-sm">
+                    {activeChatUser.name.charAt(0)}
+                  </div>
+                  <span
+                    className={`absolute -bottom-0.5 -left-0.5 w-3 h-3 rounded-full border-2 border-slate-950 ${
+                      isUserTrulyOnline(activeChatUser) ? 'bg-emerald-400' : 'bg-slate-500'
+                    }`}
+                  ></span>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-bold text-white">{activeChatUser.name}</h3>
+                  <div className="text-[11px] flex items-center gap-1.5">
+                    {isUserTrulyOnline(activeChatUser) ? (
+                      <span className="text-emerald-400 font-semibold">متصل الآن</span>
+                    ) : (
+                      <span className="text-slate-400">غير متصل حالياً</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* منطقة الرسائل */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-950/50">
+              {currentChatMessages.length === 0 ? (
+                <div className="text-center py-20 text-slate-500 text-xs">
+                  لا توجد رسائل سابقة مع {activeChatUser.name}. ابدأ المحادثة الآن!
+                </div>
+              ) : (
+                currentChatMessages.map(msg => {
+                  const isMe = msg.senderId === currentUser.id;
+                  return (
+                    <div key={msg.id} className={`flex ${isMe ? 'justify-start' : 'justify-end'}`}>
+                      <div
+                        className={`max-w-[78%] rounded-2xl px-4 py-2.5 shadow-md space-y-1 ${
+                          isMe
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-bold rounded-tr-none'
+                            : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700 font-normal'
+                        }`}
+                      >
+                        <p className="leading-relaxed whitespace-pre-line text-sm">{msg.text}</p>
+                        <div
+                          className={`text-[10px] flex items-center justify-end gap-1 ${
+                            isMe ? 'text-slate-900 font-semibold' : 'text-slate-400'
+                          }`}
+                        >
+                          <span>{msg.timestamp}</span>
+                          {isMe && <CheckCheck className="w-3.5 h-3.5 text-slate-950" />}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* شريط إرسال الرسالة */}
+            <form onSubmit={handleSendMessage} className="p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
+              <input
+                type="text"
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                placeholder="اكتب رسالتك هنا..."
+                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+              />
+              <button
+                type="submit"
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 p-3 rounded-xl transition-all shadow-md shadow-emerald-500/20 active:scale-95"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </form>
+          </div>
+        )}
+      </main>
+
+      {/* نافذة الإعدادات (تحتوي على بيانات الحساب وزر تسجيل الخروج فقط بدون حذف الحساب) */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-6">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-2 text-white font-bold text-base">
+                <Settings className="w-5 h-5 text-emerald-400" />
+                الإعدادات
+              </div>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="text-slate-400 hover:text-white text-xs"
+              >
+                إغلاق
+              </button>
+            </div>
+
+            {/* بيانات الحساب المسجل */}
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center font-black text-slate-950 text-xl">
+                {currentUser.name.charAt(0)}
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white">{currentUser.name}</h4>
+                <div className="text-xs text-emerald-400 font-mono mt-0.5">{currentUser.phone}</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">بياناتك محفوظة تلقائياً للدخول القادم</div>
+              </div>
+            </div>
+
+            {/* زر تسجيل الخروج فقط */}
+            <button
+              onClick={handleLogout}
+              className="w-full py-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-bold text-xs rounded-xl border border-rose-500/30 transition-all flex items-center justify-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              تسجيل الخروج
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة التحقق من كلمة سر صاحب الموقع (بدون أي تلميحات) */}
+      {showAdminLoginModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <form
+            onSubmit={handleAdminAuth}
+            className="bg-slate-900 border border-amber-500/30 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex justify-between items-center">
+              <h3 className="text-base font-black text-amber-400 flex items-center gap-2">
+                <Shield className="w-5 h-5" />
+                دخول صاحب الموقع
+              </h3>
+              <button
+                type="button"
+                onClick={() => { setShowAdminLoginModal(false); setAdminError(''); setAdminPassInput(''); }}
+                className="text-slate-400 hover:text-white text-xs"
+              >
+                إغلاق
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              أدخل كلمة سر الإدارة للمتابعة:
+            </p>
+
+            {adminError && (
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+                {adminError}
+              </div>
+            )}
+
+            <input
+              type="password"
+              value={adminPassInput}
+              onChange={(e) => setAdminPassInput(e.target.value)}
+              placeholder="كلمة السر..."
+              dir="ltr"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-center text-white focus:outline-none focus:border-amber-500"
+            />
+
+            <button
+              type="submit"
+              className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl transition-colors"
+            >
+              فتح لوحة التحكم
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
